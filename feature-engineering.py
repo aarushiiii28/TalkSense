@@ -1,37 +1,83 @@
+
+
 import os
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.feature_extraction.text import TfidfVectorizer
-import pickle
+import numpy as np
+import torch
+from transformers import AutoTokenizer, AutoModel
+from tqdm import tqdm
 
-print("Current working directory:", os.getcwd())
-print("File exists:", os.path.exists(r"D:\talk-sense\data\processed\cleaned_data.csv"))
+# =========================
+# Configuration
+# =========================
+MODEL_NAME = 'distilbert-base-uncased'
+DATA_PATH = os.path.join("data", "processed", "cleaned_data.csv")
+OUTPUT_DIR = os.path.join("data", "processed")
 
-df = pd.read_csv(r"D:\talk-sense\data\processed\cleaned_data.csv")
+# =========================
+# Load Model and Tokenizer
+# =========================
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+model = AutoModel.from_pretrained(MODEL_NAME)
+model.eval()  # put model in evaluation mode
 
-# 🧹 Clean up missing or empty text values
-df = df.dropna(subset=['clean_text'])
-df = df[df['clean_text'].str.strip() != '']
+# Use GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model.to(device)
 
-X = df['clean_text']
-y = df['sentiment']
+# =========================
+# Embedding Function
+# =========================
+def get_embedding(text):
+    """Return CLS token embedding for a given text."""
+    if not isinstance(text, str) or text.strip() == "":
+        return np.zeros(model.config.hidden_size)
+    
+    inputs = tokenizer(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding=True,
+        max_length=128
+    ).to(device)
+    
+    with torch.no_grad():
+        outputs = model(**inputs)
+        cls_embedding = outputs.last_hidden_state[:, 0, :]  # CLS token
+    
+    return cls_embedding.squeeze().detach().cpu().numpy()
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# =========================
+# Main Script
+# =========================
+if __name__ == "__main__":
+    print("🔹 Loading cleaned dataset...")
+    df = pd.read_csv(DATA_PATH)
+    
+    # Clean data
+    df = df.dropna(subset=["clean_text"])
+    df = df[df["clean_text"].str.strip() != ""]
 
-vectorizer = TfidfVectorizer(max_features=5000)
-X_train_vectors = vectorizer.fit_transform(X_train)
-X_test_vectors = vectorizer.transform(X_test)
+    print(f"✅ Loaded {len(df)} samples.")
+    
+    embeddings = []
+    print("🔸 Generating embeddings (this may take a few minutes)...")
+    for text in tqdm(df["clean_text"].tolist()):
+        emb = get_embedding(text)
+        embeddings.append(emb)
+    
+    # Stack all embeddings into a numpy array
+    X = np.stack(embeddings)
+    y = df["sentiment"].values
 
-# Save processed features
-with open(r"D:\talk-sense\data\processed\X_train.pkl", 'wb') as f:
-    pickle.dump(X_train_vectors, f)
-with open(r"D:\talk-sense\data\processed\X_test.pkl", 'wb') as f:
-    pickle.dump(X_test_vectors, f)
+    # =========================
+    # Save Processed Features
+    # =========================
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    np.save(os.path.join(OUTPUT_DIR, "X_embeddings.npy"), X)
+    pd.DataFrame(y, columns=["sentiment"]).to_csv(
+        os.path.join(OUTPUT_DIR, "y_labels.csv"), index=False
+    )
 
-y_train.to_csv(r"D:\talk-sense\data\processed\y_train.csv", index=False)
-y_test.to_csv(r"D:\talk-sense\data\processed\y_test.csv", index=False)
-
-with open(r"D:\talk-sense\models\tfidf_vectorizer.pkl", 'wb') as f:
-    pickle.dump(vectorizer, f)
-
-print("✅ Feature engineering complete! Files saved successfully.")
+    print("✅ Feature engineering complete!")
+    print(f"Saved: X_embeddings.npy and y_labels.csv in {OUTPUT_DIR}")
