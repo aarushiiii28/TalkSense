@@ -1,11 +1,19 @@
-
-
 import os
 import pandas as pd
 import numpy as np
 import torch
 from transformers import AutoTokenizer, AutoModel
 from tqdm import tqdm
+import re
+
+def preprocess_text(text):
+    """Basic text preprocessing: lowercase, remove URLs and special characters."""
+    text = text.lower()
+    text = re.sub(r"http\S+|www\S+", "", text)  # remove URLs
+    text = re.sub(r"[^a-z0-9\s]", "", text)     # remove punctuation
+    text = text.strip()
+    return text
+
 
 # =========================
 # Configuration
@@ -81,3 +89,8 @@ if __name__ == "__main__":
 
     print("✅ Feature engineering complete!")
     print(f"Saved: X_embeddings.npy and y_labels.csv in {OUTPUT_DIR}")
+
+
+    print("✅ Feature engineering complete!")
+    print(f"Saved: X_embeddings.npy and y_labels.csv in {OUTPUT_DIR}")
+
